@@ -1,0 +1,18 @@
+{
+    "name": "token-supply-api",
+    "version": "1.0.0",
+    "description": "YOM Token Circulating Supply API for CoinGecko integration",
+    "main": "src/server.js",
+    "scripts": {
+        "start": "node src/server.js",
+        "dev": "node --watch src/server.js",
+        "test": "node test/verify-schedule.js"
+    },
+    "keywords": ["yom", "token", "supply", "coingecko"],
+    "author": "YOM",
+    "license": "ISC",
+    "dependencies": {
+        "cors": "^2.8.6",
+        "express": "^5.2.1"
+    }
+}
