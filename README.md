@@ -1,50 +1,57 @@
 # YOM Token Supply API
 
-Public API that returns YOM token circulating and total supply, built for [CoinGecko integration](https://www.coingecko.com/en/methodology) (Section C).
+Public API that returns YOM token circulating and total supply, built for
+CoinMarketCap / [CoinGecko](https://www.coingecko.com/en/methodology) supply
+verification (served at `https://supply.yom.net`, Fly app `yom-token-supply`).
+
+Circulating supply is computed **live from the Avalanche C-Chain**:
+
+```
+circulating = 750,000,000 − Σ balanceOf(reserve wallet)
+```
+
+The reserve wallet set (team/treasury vesting escrows, deployer, team wallet,
+launchpad claim contracts) lives in [`src/onchain-supply.js`](src/onchain-supply.js)
+and mirrors two other surfaces that must stay in sync with it:
+
+- `yom-token-monitor/data/wallet_registry.yaml` (`supply_class: reserve`)
+- the red rows of the CMC "Verified Supply" Annex C submission sheet
+
+This is the same formula aggregators apply when independently verifying
+supply, so the API always agrees with what a reviewer computes from the
+explorer.
 
 ## Endpoints
 
 | Endpoint | Response | Description |
 |----------|----------|-------------|
-| `GET /circulating-supply` | Plain number | Current circulating supply (daily interpolated) |
+| `GET /circulating-supply` | Plain number | Live on-chain circulating supply |
 | `GET /total-supply` | Plain number | Total supply: `750000000` |
-| `GET /token-supply` | JSON | Full breakdown by category |
+| `GET /token-supply` | JSON | Circulating + per-reserve-wallet breakdown |
 | `GET /health` | JSON | Health check |
 
 ### Example: `/circulating-supply`
 ```
-472267194
+117200572
 ```
 
 ### Example: `/token-supply`
 ```json
 {
-  "circulatingSupply": 472267194,
+  "circulatingSupply": 117200572,
   "totalSupply": 750000000,
-  "breakdown": {
-    "private": 22500000,
-    "exchanges": 6000000,
-    "mindshare": 3000000,
-    "team": 12375000,
-    "ecosystem": 125000000,
-    "treasury": 125000000,
-    "community": 20860735,
-    "hodl": 89231222,
-    "liquidityPool": 68300237
-  },
-  "date": "2027-11-25",
-  "tgeDate": "2026-03-25"
+  "reserve": 632799427.93,
+  "method": "circulating = totalSupply - sum(balanceOf(reserve wallets)), read live from Avalanche C-Chain",
+  "reserveWallets": [
+    { "address": "0xc1028208B5Fa8E034B90c74B620C0855f85659F5", "label": "Team Finance vesting vault (treasury/ecosystem/HODL)", "balance": 610594750.17 }
+  ],
+  "date": "2026-07-15"
 }
 ```
 
-## Token Economics
-
-- **Total Supply**: 750,000,000 YOM
-- **TGE Date**: March 25, 2026
-- **Full Vesting**: 60 months (month 45 reaches 750M)
-- **Categories**: Private, Exchanges, Mindshare, Team, Ecosystem, Treasury, Community, HODL!, Liquidity Pool
-
-Supply is calculated by linearly interpolating between monthly vesting milestones, giving daily granularity.
+Balances are cached for 1 hour. On RPC failure the last good value keeps
+being served; a cold boot during an RPC outage serves a pinned last-verified
+figure marked `"stale": true`.
 
 ## Run Locally
 
@@ -52,10 +59,14 @@ Supply is calculated by linearly interpolating between monthly vesting milestone
 npm install
 npm start        # http://localhost:3000
 npm run dev      # with auto-reload
-npm test         # verify schedule math
+npm test         # live smoke test against the Avalanche RPC
 ```
 
 ## Deploy
+
+Merging to `main` deploys to Fly.io via GitHub Actions
+([`.github/workflows/fly-deploy.yml`](.github/workflows/fly-deploy.yml),
+requires the org `FLY_API_TOKEN` secret). Manual: `flyctl deploy`.
 
 ### Docker
 ```bash
@@ -68,11 +79,20 @@ docker run -p 3000:3000 yom-token-supply
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `3000` | Server port |
+| `AVAX_RPC_URL` | `https://api.avax.network/ext/bc/C/rpc` | Avalanche C-Chain JSON-RPC endpoint |
 
-## CoinGecko Requirements
+## Aggregator Requirements
 
-Per [CoinGecko Section C](https://www.coingecko.com/en/methodology):
+Per CMC verified-supply / CoinGecko Section C:
 - Publicly accessible, no authentication
-- Returns plain number with decimals
+- Returns plain number
 - Adequate rate limits (polled every ~30 minutes)
 - Responses include `Cache-Control` headers
+
+## Historical note
+
+`src/vesting-schedule.js` holds the original theoretical vesting schedule
+(TGE 2026-03-25, monthly cumulative unlocks). It over-reported circulating
+supply because scheduled unlocks are not executed on-chain on the paper
+timeline — the escrows still hold the tokens. It is kept for reference but no
+endpoint serves it.

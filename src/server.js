@@ -1,31 +1,44 @@
 const express = require('express');
 const cors = require('cors');
-const { getCirculatingSupply, TOTAL_SUPPLY } = require('./vesting-schedule');
+const { getOnchainSupply, TOTAL_SUPPLY, FALLBACK_CIRCULATING } = require('./onchain-supply');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 
-// Cache: recalculate at most once per hour (supply changes daily, not per-second)
+// Cache: recalculate at most once per hour. On RPC failure keep serving the
+// last good value; only fall back to the pinned constant on a cold boot.
 let cache = { data: null, timestamp: 0 };
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
-function getCachedSupply() {
+async function getCachedSupply() {
     const now = Date.now();
-    if (!cache.data || now - cache.timestamp > CACHE_TTL_MS) {
-        cache = { data: getCirculatingSupply(), timestamp: now };
+    if (cache.data && now - cache.timestamp <= CACHE_TTL_MS) return cache.data;
+    try {
+        cache = { data: await getOnchainSupply(), timestamp: now };
+    } catch (err) {
+        console.error('on-chain supply fetch failed:', err.message);
+        if (!cache.data) {
+            return {
+                circulatingSupply: FALLBACK_CIRCULATING,
+                totalSupply: TOTAL_SUPPLY,
+                stale: true,
+                method: 'fallback (last verified figure) - live RPC unavailable',
+                date: new Date().toISOString().split('T')[0],
+            };
+        }
     }
     return cache.data;
 }
 
 /**
  * GET /circulating-supply
- * Returns plain number (CoinGecko Section C format).
- * Example response: 472267194
+ * Returns plain number (CMC/CoinGecko Section C format).
+ * Example response: 117200572
  */
-app.get('/circulating-supply', (req, res) => {
-    const supply = getCachedSupply();
+app.get('/circulating-supply', async (req, res) => {
+    const supply = await getCachedSupply();
     res.set('Content-Type', 'text/plain');
     res.set('Cache-Control', 'public, max-age=1800'); // 30 min
     res.send(String(supply.circulatingSupply));
@@ -33,7 +46,7 @@ app.get('/circulating-supply', (req, res) => {
 
 /**
  * GET /total-supply
- * Returns plain number (CoinGecko Section C format).
+ * Returns plain number (CMC/CoinGecko Section C format).
  * Example response: 750000000
  */
 app.get('/total-supply', (req, res) => {
@@ -44,10 +57,11 @@ app.get('/total-supply', (req, res) => {
 
 /**
  * GET /token-supply
- * Returns full JSON breakdown for dashboards.
+ * Returns full JSON breakdown: circulating, reserve total, and the live
+ * balance of every reserve wallet the circulating figure excludes.
  */
-app.get('/token-supply', (req, res) => {
-    const supply = getCachedSupply();
+app.get('/token-supply', async (req, res) => {
+    const supply = await getCachedSupply();
     res.set('Cache-Control', 'public, max-age=1800');
     res.json(supply);
 });
