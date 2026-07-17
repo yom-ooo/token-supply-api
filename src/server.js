@@ -56,6 +56,27 @@ app.get('/total-supply', (req, res) => {
 });
 
 /**
+ * GET /supply/circulating
+ * CoinGecko format: JSON body {"result":"<number>"} (matches
+ * https://api.coingecko.com/api/v3/supply/eth). CMC keeps polling the
+ * plain-text /circulating-supply above.
+ */
+app.get('/supply/circulating', async (req, res) => {
+    const supply = await getCachedSupply();
+    res.set('Cache-Control', 'public, max-age=1800'); // 30 min
+    res.json({ result: String(supply.circulatingSupply) });
+});
+
+/**
+ * GET /supply/total
+ * CoinGecko format: JSON body {"result":"<number>"}.
+ */
+app.get('/supply/total', (req, res) => {
+    res.set('Cache-Control', 'public, max-age=86400'); // 24 hours (never changes)
+    res.json({ result: String(TOTAL_SUPPLY) });
+});
+
+/**
  * GET /token-supply
  * Returns full JSON breakdown: circulating, reserve total, and the live
  * balance of every reserve wallet the circulating figure excludes.
