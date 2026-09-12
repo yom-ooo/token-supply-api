@@ -1,2 +1,5 @@
 node_modules/
 .env
+# Claude Code isolated-subagent worktrees; the fleet's worktree root is $YOM_BASE_DIR/.worktrees/ (yom-spine .claude/rules/git-workflow.md)
+.claude/worktrees/
+.claude-worktrees/
