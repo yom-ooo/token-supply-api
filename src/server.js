@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { getOnchainSupply, TOTAL_SUPPLY, FALLBACK_CIRCULATING } = require('./onchain-supply');
+const { getOnchainSupply, MAX_SUPPLY, FALLBACK_CIRCULATING } = require('./onchain-supply');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -22,7 +22,8 @@ async function getCachedSupply() {
         if (!cache.data) {
             return {
                 circulatingSupply: FALLBACK_CIRCULATING,
-                totalSupply: TOTAL_SUPPLY,
+                totalSupply: MAX_SUPPLY,
+                maxSupply: MAX_SUPPLY,
                 stale: true,
                 method: 'fallback (last verified figure) - live RPC unavailable',
                 date: new Date().toISOString().split('T')[0],
@@ -46,13 +47,37 @@ app.get('/circulating-supply', async (req, res) => {
 
 /**
  * GET /total-supply
- * Returns plain number (CMC/CoinGecko Section C format).
+ * Returns plain number (CMC/CoinGecko Section C format): live on-chain
+ * totalSupply(), i.e. genesis supply minus cumulative burn.
+ * Example response: 749999332
+ */
+app.get('/total-supply', async (req, res) => {
+    const supply = await getCachedSupply();
+    res.set('Content-Type', 'text/plain');
+    res.set('Cache-Control', 'public, max-age=1800'); // 30 min
+    res.send(String(supply.totalSupply));
+});
+
+/**
+ * GET /max-supply
+ * Returns plain number: tokens minted at genesis (fixed, never changes).
  * Example response: 750000000
  */
-app.get('/total-supply', (req, res) => {
+app.get('/max-supply', (req, res) => {
     res.set('Content-Type', 'text/plain');
-    res.set('Cache-Control', 'public, max-age=86400'); // 24 hours (never changes)
-    res.send(String(TOTAL_SUPPLY));
+    res.set('Cache-Control', 'public, max-age=86400'); // 24 hours
+    res.send(String(MAX_SUPPLY));
+});
+
+/**
+ * GET /burned-supply
+ * Returns plain number: cumulative tokens burned (max supply - live totalSupply).
+ */
+app.get('/burned-supply', async (req, res) => {
+    const supply = await getCachedSupply();
+    res.set('Content-Type', 'text/plain');
+    res.set('Cache-Control', 'public, max-age=1800');
+    res.send(String(Math.floor(supply.burned || 0)));
 });
 
 /**
@@ -69,17 +94,28 @@ app.get('/supply/circulating', async (req, res) => {
 
 /**
  * GET /supply/total
- * CoinGecko format: JSON body {"result":"<number>"}.
+ * CoinGecko format: JSON body {"result":"<number>"} - live totalSupply().
  */
-app.get('/supply/total', (req, res) => {
-    res.set('Cache-Control', 'public, max-age=86400'); // 24 hours (never changes)
-    res.json({ result: String(TOTAL_SUPPLY) });
+app.get('/supply/total', async (req, res) => {
+    const supply = await getCachedSupply();
+    res.set('Cache-Control', 'public, max-age=1800'); // 30 min
+    res.json({ result: String(supply.totalSupply) });
+});
+
+/**
+ * GET /supply/max
+ * CoinGecko format: JSON body {"result":"<number>"} - genesis max supply.
+ */
+app.get('/supply/max', (req, res) => {
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.json({ result: String(MAX_SUPPLY) });
 });
 
 /**
  * GET /token-supply
- * Returns full JSON breakdown: circulating, reserve total, and the live
- * balance of every reserve wallet the circulating figure excludes.
+ * Returns full JSON breakdown: circulating, live total, max, burned, reserve
+ * total, and the live balance of every reserve wallet the circulating figure
+ * excludes.
  */
 app.get('/token-supply', async (req, res) => {
     const supply = await getCachedSupply();

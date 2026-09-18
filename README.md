@@ -4,11 +4,18 @@ Public API that returns YOM token circulating and total supply, built for
 CoinMarketCap / [CoinGecko](https://www.coingecko.com/en/methodology) supply
 verification (served at `https://supply.yom.net`, Fly app `yom-token-supply`).
 
-Circulating supply is computed **live from the Avalanche C-Chain**:
+Total and circulating supply are computed **live from the Avalanche C-Chain**:
 
 ```
-circulating = 750,000,000 − Σ balanceOf(reserve wallet)
+total       = totalSupply()                      # 750,000,000 genesis − burned
+burned      = 750,000,000 − totalSupply()
+circulating = totalSupply() − Σ balanceOf(reserve wallet)
 ```
+
+The YOM token burns protocol fees by calling `burn()`, which lowers the
+contract's `totalSupply()`. Burned tokens are therefore excluded from both the
+total and the circulating figure automatically; nothing is parked at a dead
+address.
 
 The reserve wallet set (team/treasury vesting escrows, deployer, team wallet,
 launchpad claim contracts) lives in [`src/onchain-supply.js`](src/onchain-supply.js)
@@ -25,9 +32,14 @@ explorer.
 
 | Endpoint | Response | Description |
 |----------|----------|-------------|
-| `GET /circulating-supply` | Plain number | Live on-chain circulating supply |
-| `GET /total-supply` | Plain number | Total supply: `750000000` |
-| `GET /token-supply` | JSON | Circulating + per-reserve-wallet breakdown |
+| `GET /circulating-supply` | Plain number | Live on-chain circulating supply (CMC) |
+| `GET /total-supply` | Plain number | Live on-chain `totalSupply()` = genesis − burned (CMC) |
+| `GET /max-supply` | Plain number | Genesis supply: `750000000` |
+| `GET /burned-supply` | Plain number | Cumulative burned tokens |
+| `GET /supply/circulating` | `{"result":"<n>"}` | CoinGecko-format circulating |
+| `GET /supply/total` | `{"result":"<n>"}` | CoinGecko-format live total |
+| `GET /supply/max` | `{"result":"<n>"}` | CoinGecko-format max supply |
+| `GET /token-supply` | JSON | Circulating, total, max, burned + per-reserve-wallet breakdown |
 | `GET /health` | JSON | Health check |
 
 ### Example: `/circulating-supply`
@@ -38,14 +50,16 @@ explorer.
 ### Example: `/token-supply`
 ```json
 {
-  "circulatingSupply": 117200572,
-  "totalSupply": 750000000,
-  "reserve": 632799427.93,
-  "method": "circulating = totalSupply - sum(balanceOf(reserve wallets)), read live from Avalanche C-Chain",
+  "circulatingSupply": 118680702,
+  "totalSupply": 749999332,
+  "maxSupply": 750000000,
+  "burned": 667.06,
+  "reserve": 631318630.43,
+  "method": "totalSupply = totalSupply() (750M genesis minus burned); circulating = totalSupply - sum(balanceOf(reserve wallets)); all read live from Avalanche C-Chain",
   "reserveWallets": [
     { "address": "0xc1028208B5Fa8E034B90c74B620C0855f85659F5", "label": "Team Finance vesting vault (treasury/ecosystem/HODL)", "balance": 610594750.17 }
   ],
-  "date": "2026-07-15"
+  "date": "2026-09-18"
 }
 ```
 

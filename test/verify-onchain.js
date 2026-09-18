@@ -3,11 +3,13 @@
  * checks the computed circulating supply against structural invariants.
  * Requires network access to the RPC endpoint.
  */
-const { getOnchainSupply, TOTAL_SUPPLY } = require('../src/onchain-supply');
+const { getOnchainSupply, MAX_SUPPLY } = require('../src/onchain-supply');
 
 (async () => {
     const s = await getOnchainSupply();
 
+    console.log(`max supply       : ${s.maxSupply.toLocaleString('en-US')}`);
+    console.log(`burned           : ${s.burned.toLocaleString('en-US')}`);
     console.log(`total supply     : ${s.totalSupply.toLocaleString('en-US')}`);
     console.log(`reserve          : ${s.reserve.toLocaleString('en-US')}`);
     console.log(`circulating      : ${s.circulatingSupply.toLocaleString('en-US')}`);
@@ -17,12 +19,14 @@ const { getOnchainSupply, TOTAL_SUPPLY } = require('../src/onchain-supply');
     }
 
     const errors = [];
-    if (s.totalSupply !== TOTAL_SUPPLY) errors.push('total supply mismatch');
+    if (s.maxSupply !== MAX_SUPPLY) errors.push('max supply mismatch');
+    if (!(s.burned >= 0 && s.burned < 100_000_000)) errors.push(`burned out of range: ${s.burned}`);
+    if (Math.abs(s.totalSupply + s.burned - MAX_SUPPLY) > 1) errors.push('total + burned != max');
     if (!(s.reserve > 400_000_000)) errors.push(`reserve implausibly low: ${s.reserve}`);
-    if (!(s.circulatingSupply > 10_000_000 && s.circulatingSupply < TOTAL_SUPPLY)) {
+    if (!(s.circulatingSupply > 10_000_000 && s.circulatingSupply < s.totalSupply)) {
         errors.push(`circulating out of range: ${s.circulatingSupply}`);
     }
-    if (Math.abs(s.reserve + s.circulatingSupply - TOTAL_SUPPLY) > 1) {
+    if (Math.abs(s.reserve + s.circulatingSupply - s.totalSupply) > 1) {
         errors.push('reserve + circulating != total');
     }
 
