@@ -1,10 +1,16 @@
 /**
- * YOM on-chain circulating supply.
+ * YOM on-chain supply.
  *
- * Circulating = TOTAL_SUPPLY − Σ balanceOf(reserve wallet), read live from the
- * Avalanche C-Chain. This is the same formula CoinMarketCap/CoinGecko apply
- * when verifying self-reported supply, so this endpoint always agrees with
- * what a reviewer can independently compute from the explorer.
+ * Total       = totalSupply() read live from the token contract. The YOM token
+ *               burns protocol fees via burn(), which lowers totalSupply
+ *               on-chain, so total = MAX_SUPPLY − burned.
+ * Burned      = MAX_SUPPLY − totalSupply()
+ * Circulating = totalSupply() − Σ balanceOf(reserve wallet)
+ *
+ * All three are read live from the Avalanche C-Chain. This is the same formula
+ * CoinMarketCap/CoinGecko apply when verifying self-reported supply, so these
+ * endpoints always agree with what a reviewer can independently compute from
+ * the explorer.
  *
  * RESERVE_WALLETS mirrors the `supply_class: reserve` set in
  * yom-token-monitor/data/wallet_registry.yaml and the red rows of the CMC
@@ -12,7 +18,9 @@
  * is added, drained, or reclassified.
  */
 
-const TOTAL_SUPPLY = 750_000_000;
+// Minted at genesis; fixed. Live total supply is lower by the cumulative burn.
+const MAX_SUPPLY = 750_000_000;
+const TOTAL_SUPPLY = MAX_SUPPLY; // backwards-compatible alias (genesis supply)
 const TOKEN = '0xb6314518b61b4864162c7aE7fdc36261e0A14C4b';
 const RPC_URL = process.env.AVAX_RPC_URL || 'https://api.avax.network/ext/bc/C/rpc';
 
@@ -53,16 +61,45 @@ async function rpcBalanceOf(address) {
     return BigInt(json.result);
 }
 
+async function rpcTotalSupply() {
+    // ERC-20 totalSupply() selector
+    const res = await fetch(RPC_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'eth_call',
+            params: [{ to: TOKEN, data: '0x18160ddd' }, 'latest'],
+        }),
+    });
+    if (!res.ok) throw new Error(`RPC HTTP ${res.status}`);
+    const json = await res.json();
+    if (json.error) throw new Error(`RPC error: ${json.error.message}`);
+    return BigInt(json.result);
+}
+
 async function getOnchainSupply() {
-    const balances = await Promise.all(RESERVE_WALLETS.map((w) => rpcBalanceOf(w.address)));
+    const [totalWei, ...balances] = await Promise.all([
+        rpcTotalSupply(),
+        ...RESERVE_WALLETS.map((w) => rpcBalanceOf(w.address)),
+    ]);
     const reserveWei = balances.reduce((a, b) => a + b, 0n);
+    const totalTokens = Number(totalWei) / 1e18;
     const reserveTokens = Number(reserveWei) / 1e18;
-    const circulatingSupply = Math.floor(TOTAL_SUPPLY - reserveTokens);
+    const burnedTokens = MAX_SUPPLY - totalTokens;
+    if (burnedTokens < 0 || burnedTokens > MAX_SUPPLY) {
+        throw new Error(`implausible on-chain totalSupply: ${totalTokens}`);
+    }
+    const totalSupply = Math.floor(totalTokens);
+    const circulatingSupply = Math.floor(totalTokens - reserveTokens);
     return {
         circulatingSupply,
-        totalSupply: TOTAL_SUPPLY,
+        totalSupply,
+        maxSupply: MAX_SUPPLY,
+        burned: Math.round(burnedTokens * 100) / 100,
         reserve: Math.round(reserveTokens * 100) / 100,
-        method: 'circulating = totalSupply - sum(balanceOf(reserve wallets)), read live from Avalanche C-Chain',
+        method: 'totalSupply = totalSupply() (750M genesis minus burned); circulating = totalSupply - sum(balanceOf(reserve wallets)); all read live from Avalanche C-Chain',
         reserveWallets: RESERVE_WALLETS.map((w, i) => ({
             ...w,
             balance: Math.round((Number(balances[i]) / 1e18) * 100) / 100,
@@ -71,4 +108,4 @@ async function getOnchainSupply() {
     };
 }
 
-module.exports = { TOTAL_SUPPLY, TOKEN, RESERVE_WALLETS, FALLBACK_CIRCULATING, getOnchainSupply };
+module.exports = { MAX_SUPPLY, TOTAL_SUPPLY, TOKEN, RESERVE_WALLETS, FALLBACK_CIRCULATING, getOnchainSupply };
